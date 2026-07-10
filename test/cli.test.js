@@ -1,0 +1,279 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+
+const root = path.resolve(import.meta.dirname, "..");
+const cli = path.join(root, "bin", "pg-axi.js");
+
+function tempWorkspace() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "pg-axi-"));
+}
+
+function makeFakeBin(workspace, handlers = {}) {
+  const bin = path.join(workspace, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  for (const name of ["psql", "pg_isready", "createdb", "dropdb", "pg_dump", "pg_restore"]) {
+    const script = handlers[name] ?? defaultFake(name);
+    const file = path.join(bin, name);
+    fs.writeFileSync(file, script);
+    fs.chmodSync(file, 0o755);
+  }
+  return bin;
+}
+
+function defaultFake(name) {
+  if (name === "pg_isready") return "#!/bin/sh\necho '/tmp:5432 - accepting connections'\n";
+  if (name === "createdb") return "#!/bin/sh\necho 'CREATE DATABASE'\n";
+  if (name === "dropdb") return "#!/bin/sh\necho 'DROP DATABASE'\n";
+  if (name === "pg_dump") return "#!/bin/sh\necho 'dump complete'\n";
+  if (name === "pg_restore") return "#!/bin/sh\necho 'restore complete'\n";
+  return `#!/bin/sh
+args="$*"
+case "$args" in
+  *"current_database() as database"*) echo 'app|agent|16.4' ;;
+  *"information_schema.schemata) as schemas"*) echo '3|4|5|6' ;;
+  *"information_schema.tables"*) echo 'public|users|BASE TABLE'; echo 'public|orders|BASE TABLE' ;;
+  *"information_schema.columns"*) echo 'id|bigint|NO'; echo 'email|text|NO'; echo 'api_token|text|YES' ;;
+  *"pg_roles order"*) echo 'postgres|t|t|t'; echo 'app|f|f|t' ;;
+  *"pg_extension"*) echo 'pgcrypto|1.3|public' ;;
+  *"pg_stat_activity"*) echo '123|app|app|active|Lock|select secret_token from users' ;;
+  *"pg_stat_user_indexes"*) echo 'public|users|users_email_idx|0' ;;
+  *"select now()"*) echo 'now'; echo '2026-07-10 00:00:00' ;;
+  *"select password"*) echo 'password|value'; echo 'supersecret|ok' ;;
+  *"CREATE SCHEMA"*) echo 'CREATE SCHEMA' ;;
+  *"DROP SCHEMA"*) echo 'DROP SCHEMA' ;;
+  *"pg_terminate_backend"*) echo 't' ;;
+  *) echo 'ok' ;;
+esac
+`;
+}
+
+function run(args, options = {}) {
+  const cwd = options.cwd ?? tempWorkspace();
+  const env = { ...process.env, ...(options.env ?? {}) };
+  return spawnSync(cli, args, { cwd, env, encoding: "utf8" });
+}
+
+test("home view shows live PostgreSQL context and no help-first output", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  fs.writeFileSync(path.join(cwd, ".env"), "DATABASE_URL=postgres://user:secret@db.example.com/app\n");
+  const result = run([], { cwd, env: { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` } });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^bin: /);
+  assert.match(result.stdout, /description: "Operate PostgreSQL/);
+  assert.match(result.stdout, /psql: ok/);
+  assert.match(result.stdout, /ready: ok/);
+  assert.match(result.stdout, /database: app/);
+  assert.match(result.stdout, /schemas: 3/);
+  assert.match(result.stdout, /targets\[2\]{id,type,source,detail}:/);
+  assert.doesNotMatch(result.stdout, /secret/);
+  assert.doesNotMatch(result.stdout, /^usage:/);
+  assert.equal(result.stderr, "");
+});
+
+test("services include PostgreSQL capability domains", () => {
+  const result = run(["services"]);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /connection/);
+  assert.match(result.stdout, /databases/);
+  assert.match(result.stdout, /managed-postgres/);
+  assert.match(result.stdout, /replication/);
+});
+
+test("discover detects env, compose, migrations, ORM, and managed provider fixtures", () => {
+  const cwd = tempWorkspace();
+  fs.mkdirSync(path.join(cwd, "migrations"));
+  fs.mkdirSync(path.join(cwd, "prisma"), { recursive: true });
+  fs.mkdirSync(path.join(cwd, "supabase"), { recursive: true });
+  fs.writeFileSync(path.join(cwd, ".env"), "DATABASE_URL=postgres://user:secret@db.example.com/app\n");
+  fs.writeFileSync(path.join(cwd, "docker-compose.yml"), "services:\n  db:\n    image: postgres:16\n");
+  fs.writeFileSync(path.join(cwd, "migrations", "001_init.sql"), "create table users(id bigint);\n");
+  fs.writeFileSync(path.join(cwd, "prisma", "schema.prisma"), "datasource db { provider = \"postgresql\" url = env(\"DATABASE_URL\") }\n");
+  fs.writeFileSync(path.join(cwd, "supabase", "config.toml"), "project_id = 'demo'\n");
+
+  const result = run(["discover", "--full"], { cwd });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /env:\.env/);
+  assert.match(result.stdout, /compose:docker-compose.yml/);
+  assert.match(result.stdout, /migrations:migrations/);
+  assert.match(result.stdout, /config:prisma\/schema.prisma/);
+  assert.match(result.stdout, /supabase/);
+  assert.doesNotMatch(result.stdout, /secret/);
+});
+
+test("unknown flags fail before calling PostgreSQL tools", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd, {
+    psql: "#!/bin/sh\necho called >> psql-called\nexit 0\n"
+  });
+  const result = run(["list", "--kind", "tables", "--stat"], { cwd, env: { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` } });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stdout, /error: unknown flag --stat for `list`/);
+  assert.equal(fs.existsSync(path.join(cwd, "psql-called")), false);
+});
+
+test("missing required flags return structured usage errors", () => {
+  const result = run(["inspect"]);
+  assert.equal(result.status, 2);
+  assert.match(result.stdout, /error: --kind is required/);
+  assert.match(result.stdout, /help\[1\]:/);
+});
+
+test("recommend returns compact paths for managed Postgres", () => {
+  const result = run(["recommend", "--goal", "managed"]);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /paths\[3\]{id,pattern,fit,command}:/);
+  assert.match(result.stdout, /provider config scan/);
+});
+
+test("list and inspect render compact sanitized output", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const listResult = run(["list", "--kind", "tables", "--schema", "public"], { cwd, env });
+  assert.equal(listResult.status, 0);
+  assert.match(listResult.stdout, /tables\[2\]{schema,name,type}:/);
+
+  const inspectResult = run(["inspect", "--kind", "table", "--schema", "public", "--name", "users"], { cwd, env });
+  assert.equal(inspectResult.status, 0);
+  assert.match(inspectResult.stdout, /id\|bigint\|NO/);
+  assert.match(inspectResult.stdout, /api_token/);
+});
+
+test("query allows read-only SQL and redacts secret-like columns", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const readOnly = run(["query", "--sql", "select now()"], { cwd, env });
+  assert.equal(readOnly.status, 0);
+  assert.match(readOnly.stdout, /read_only: true/);
+
+  const redacted = run(["query", "--sql", "select password, value from secrets"], { cwd, env });
+  assert.equal(redacted.status, 0);
+  assert.match(redacted.stdout, /<redacted>/);
+  assert.doesNotMatch(redacted.stdout, /supersecret/);
+});
+
+test("non-read-only query is dry-run unless --execute is passed", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const dryRun = run(["query", "--sql", "update users set name = 'x'"], { cwd, env });
+  assert.equal(dryRun.status, 0);
+  assert.match(dryRun.stdout, /dry_run: true/);
+
+  const executed = run(["query", "--sql", "update users set name = 'x'", "--execute"], { cwd, env });
+  assert.equal(executed.status, 0);
+  assert.match(executed.stdout, /dry_run: false/);
+});
+
+test("create is dry-run by default and executes only with --execute", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const dryRun = run(["create", "--kind", "schema", "--name", "app"], { cwd, env });
+  assert.equal(dryRun.status, 0);
+  assert.match(dryRun.stdout, /dry_run: true/);
+  assert.match(dryRun.stdout, /CREATE SCHEMA/);
+
+  const executed = run(["create", "--kind", "schema", "--name", "app", "--execute"], { cwd, env });
+  assert.equal(executed.status, 0);
+  assert.match(executed.stdout, /dry_run: false/);
+  assert.match(executed.stdout, /CREATE SCHEMA/);
+});
+
+test("destructive drop requires confirm and execute guard", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const blocked = run(["drop", "--kind", "schema", "--name", "app"], { cwd, env });
+  assert.equal(blocked.status, 2);
+  assert.match(blocked.stdout, /requires --confirm/);
+
+  const dryRun = run(["drop", "--kind", "schema", "--name", "app", "--confirm", "app"], { cwd, env });
+  assert.equal(dryRun.status, 0);
+  assert.match(dryRun.stdout, /dry_run: true/);
+
+  const executed = run(["drop", "--kind", "schema", "--name", "app", "--confirm", "app", "--execute"], { cwd, env });
+  assert.equal(executed.status, 0);
+  assert.match(executed.stdout, /dry_run: false/);
+});
+
+test("backup and restore are guarded", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const backup = run(["backup", "--database", "app", "--file", "app.dump"], { cwd, env });
+  assert.equal(backup.status, 0);
+  assert.match(backup.stdout, /dry_run: true/);
+  assert.match(backup.stdout, /pg_dump/);
+
+  const restoreBlocked = run(["restore", "--database", "app", "--file", "app.dump"], { cwd, env });
+  assert.equal(restoreBlocked.status, 2);
+  assert.match(restoreBlocked.stdout, /requires --confirm/);
+
+  const restore = run(["restore", "--database", "app", "--file", "app.dump", "--confirm", "app"], { cwd, env });
+  assert.equal(restore.status, 0);
+  assert.match(restore.stdout, /dry_run: true/);
+});
+
+test("activity, stats, and kill use compact output and guards", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const activity = run(["activity"], { cwd, env });
+  assert.equal(activity.status, 0);
+  assert.match(activity.stdout, /sessions\[1\]{pid,user,database,state,wait,query}:/);
+
+  const stats = run(["stats", "--kind", "indexes"], { cwd, env });
+  assert.equal(stats.status, 0);
+  assert.match(stats.stdout, /stats\[1\]{schema,table,index,idx_scan}:/);
+
+  const kill = run(["kill", "--pid", "123", "--confirm", "123"], { cwd, env });
+  assert.equal(kill.status, 0);
+  assert.match(kill.stdout, /dry_run: true/);
+});
+
+test("doctor reports missing psql without crashing", () => {
+  const cwd = tempWorkspace();
+  const result = run(["doctor"], { cwd, env: { PATH: path.dirname(process.execPath) } });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /psql,missing/);
+  assert.match(result.stdout, /summary: attention-required/);
+});
+
+test("skill generate check fails when stale and passes after generation", () => {
+  const cwd = tempWorkspace();
+  const stale = run(["skill", "generate", "--check"], { cwd });
+  assert.equal(stale.status, 1);
+  assert.match(stale.stdout, /generated skill is stale or missing/);
+
+  const generated = run(["skill", "generate"], { cwd });
+  assert.equal(generated.status, 0);
+  assert.equal(fs.existsSync(path.join(cwd, "SKILL.md")), true);
+
+  const checked = run(["skill", "generate", "--check"], { cwd });
+  assert.equal(checked.status, 0);
+  assert.equal(checked.stdout, "skill: up-to-date");
+});
+
+test("optional live PostgreSQL doctor is gated behind PG_AXI_LIVE_TESTS", { skip: process.env.PG_AXI_LIVE_TESTS !== "1" }, () => {
+  const result = run(["doctor"], { env: process.env });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /checks\[/);
+});
