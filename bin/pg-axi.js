@@ -390,6 +390,7 @@ function backup(parsed, context) {
   if (!database) usageError("--database is required", ["Run `pg-axi backup --database <name> --file <path>`"]);
   if (!file) usageError("--file is required", ["Run `pg-axi backup --database <name> --file <path>`"]);
   if (!["plain", "custom"].includes(format)) usageError("unknown backup format", ["valid formats: plain, custom"]);
+  assertDatabaseMatchesUrl(database, context);
   const command = pgDumpCommand(database, file, format, context);
   if (!parsed.flags.execute) {
     print(["backup:", "  dry_run: true", `  database: ${toonScalar(database)}`, `  file: ${toonScalar(file)}`, `  command: ${toonScalar(formatCommand(command))}`, formatHelp(["Add `--execute` to write the backup after review"])].join("\n"));
@@ -407,6 +408,7 @@ function restore(parsed, context) {
   if (!database) usageError("--database is required", ["Run `pg-axi restore --database <name> --file <path> --confirm <name>`"]);
   if (!file) usageError("--file is required", ["Run `pg-axi restore --database <name> --file <path> --confirm <name>`"]);
   if (parsed.flags.confirm !== database) usageError("restore requires --confirm matching --database", [`Run \`pg-axi restore --database ${database} --file ${file} --confirm ${database}\` after review`]);
+  assertDatabaseMatchesUrl(database, context);
   const command = restoreCommand(database, file, parsed.flags.clean, context);
   if (!parsed.flags.execute) {
     print(["restore:", "  dry_run: true", `  database: ${toonScalar(database)}`, `  file: ${toonScalar(file)}`, `  command: ${toonScalar(formatCommand(command))}`, formatHelp(["Add `--execute` to restore after review"])].join("\n"));
@@ -555,12 +557,26 @@ function runPsql(sql, context, options = {}) {
 
 function connectionArgs(context, tool) {
   const args = [];
-  if (context.url && tool === "psql") args.push(context.url);
+  if (context.url) args.push(...(tool === "psql" ? [context.url] : ["-d", context.url]));
   if (context.host) args.push("-h", context.host);
   if (context.port) args.push("-p", context.port);
   if (context.user) args.push("-U", context.user);
-  if (context.database && tool !== "createdb" && tool !== "dropdb") args.push("-d", context.database);
+  if (!context.url && context.database && tool !== "createdb" && tool !== "dropdb") args.push("-d", context.database);
   return args;
+}
+
+function assertDatabaseMatchesUrl(database, context) {
+  if (!context.url || !database) return;
+  const named = urlDatabase(context.url);
+  if (named && named !== database) usageError(`--database ${toonScalar(database)} does not match the database in --url`, [`Run the command with --database ${named} or point --url at ${toonScalar(database)}`]);
+}
+
+function urlDatabase(url) {
+  try {
+    return decodeURIComponent(new URL(url).pathname.replace(/^\//, ""));
+  } catch {
+    return "";
+  }
 }
 
 function commandContext(_command, context) {
@@ -617,7 +633,7 @@ function pgDumpCommand(database, file, format, context) {
 
 function restoreCommand(database, file, clean, context) {
   if (file.endsWith(".sql")) return { cmd: "psql", args: [...connectionArgs({ ...context, database }, "psql"), "-f", file] };
-  return { cmd: "pg_restore", args: [...connectionArgs({ ...context, database }, "pg_restore"), ...(clean ? ["--clean"] : []), "-d", database, file] };
+  return { cmd: "pg_restore", args: [...connectionArgs({ ...context, database }, "pg_restore"), ...(clean ? ["--clean"] : []), file] };
 }
 
 function listSpec(kind, flags) {

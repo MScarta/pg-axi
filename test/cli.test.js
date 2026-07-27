@@ -51,6 +51,10 @@ esac
 `;
 }
 
+function argvFake(name) {
+  return `#!/bin/sh\necho "$@" >> ${name}-argv\necho 'ok'\n`;
+}
+
 function run(args, options = {}) {
   const cwd = options.cwd ?? tempWorkspace();
   const env = { ...process.env, ...(options.env ?? {}) };
@@ -270,6 +274,43 @@ test("skill generate check fails when stale and passes after generation", () => 
   const checked = run(["skill", "generate", "--check"], { cwd });
   assert.equal(checked.status, 0);
   assert.equal(checked.stdout, "skill: up-to-date");
+});
+
+test("--url is honoured by pg_dump, pg_restore, createdb, and dropdb", () => {
+  const cwd = tempWorkspace();
+  const url = "postgres://user:secret@db.example.com:5432/app";
+  const fakeBin = makeFakeBin(cwd, {
+    pg_dump: argvFake("pg_dump"),
+    pg_restore: argvFake("pg_restore"),
+    createdb: argvFake("createdb"),
+    dropdb: argvFake("dropdb"),
+    psql: argvFake("psql")
+  });
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+  const argv = (name) => fs.readFileSync(path.join(cwd, `${name}-argv`), "utf8");
+
+  assert.equal(run(["backup", "--url", url, "--database", "app", "--file", "app.dump", "--execute"], { cwd, env }).status, 0);
+  assert.match(argv("pg_dump"), new RegExp(`-d ${url}`));
+
+  assert.equal(run(["create", "--kind", "database", "--url", url, "--name", "fresh", "--execute"], { cwd, env }).status, 0);
+  assert.match(argv("createdb"), new RegExp(`-d ${url}`));
+
+  assert.equal(run(["drop", "--kind", "database", "--url", url, "--name", "staging", "--confirm", "staging", "--execute"], { cwd, env }).status, 0);
+  assert.match(argv("dropdb"), new RegExp(`-d ${url} staging`));
+
+  assert.equal(run(["restore", "--url", url, "--database", "app", "--file", "app.dump", "--confirm", "app", "--execute"], { cwd, env }).status, 0);
+  assert.match(argv("pg_restore"), new RegExp(`-d ${url}`));
+});
+
+test("--database that disagrees with --url is rejected instead of silently ignored", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd, { pg_dump: argvFake("pg_dump") });
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+  const result = run(["backup", "--url", "postgres://db.example.com/app", "--database", "other", "--file", "x.dump", "--execute"], { cwd, env });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stdout, /does not match the database in --url/);
+  assert.equal(fs.existsSync(path.join(cwd, "pg_dump-argv")), false);
 });
 
 test("optional live PostgreSQL doctor is gated behind PG_AXI_LIVE_TESTS", { skip: process.env.PG_AXI_LIVE_TESTS !== "1" }, () => {
