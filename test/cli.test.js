@@ -276,6 +276,26 @@ test("skill generate check fails when stale and passes after generation", () => 
   assert.equal(checked.stdout, "skill: up-to-date");
 });
 
+test("vacuum-full and reindex require an explicit target", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd, { psql: argvFake("psql") });
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const untargeted = run(["maintenance", "--action", "vacuum-full", "--confirm", "database", "--execute"], { cwd, env });
+  assert.equal(untargeted.status, 2);
+  assert.match(untargeted.stdout, /error: --target is required for vacuum-full/);
+  assert.equal(fs.existsSync(path.join(cwd, "psql-argv")), false);
+
+  const mismatched = run(["maintenance", "--action", "reindex", "--target", "public.orders", "--confirm", "database"], { cwd, env });
+  assert.equal(mismatched.status, 2);
+  assert.match(mismatched.stdout, /requires --confirm matching --target/);
+
+  const targeted = run(["maintenance", "--action", "vacuum-full", "--target", "public.orders", "--confirm", "public.orders"], { cwd, env });
+  assert.equal(targeted.status, 0);
+  assert.match(targeted.stdout, /sql: "VACUUM FULL \\"public\\".\\"orders\\""/);
+  assert.match(targeted.stdout, /connection: /);
+});
+
 test("generated skill guidance does not send agents to an unpublished npm package", () => {
   const cwd = tempWorkspace();
   const generated = run(["skill", "generate"], { cwd });

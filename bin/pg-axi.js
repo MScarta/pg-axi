@@ -431,10 +431,11 @@ function maintenance(parsed, context) {
   const sql = maintenanceSql(action, parsed.flags.target);
   if (!sql) usageError(`unknown maintenance action ${toonScalar(action)}`, ["valid actions: analyze, vacuum, vacuum-full, reindex"]);
   const needsConfirm = ["vacuum-full", "reindex"].includes(action);
+  if (needsConfirm && !parsed.flags.target) usageError(`--target is required for ${action}`, [`Run \`pg-axi maintenance --action ${action} --target <schema.table> --confirm <schema.table>\``]);
   const target = parsed.flags.target ?? "database";
-  if (needsConfirm && parsed.flags.confirm !== target) usageError("destructive maintenance requires --confirm matching target", [`Run \`pg-axi maintenance --action ${action} --target ${target} --confirm ${target}\``]);
+  if (needsConfirm && parsed.flags.confirm !== target) usageError("destructive maintenance requires --confirm matching --target", [`Run \`pg-axi maintenance --action ${action} --target ${target} --confirm ${target}\``]);
   if (!parsed.flags.execute) {
-    print(["maintenance:", "  dry_run: true", `  action: ${action}`, `  target: ${toonScalar(target)}`, `  sql: ${toonScalar(sql)}`, formatHelp(["Add `--execute` to run maintenance after review"])].join("\n"));
+    print(["maintenance:", "  dry_run: true", `  action: ${action}`, `  target: ${toonScalar(target)}`, `  connection: ${toonScalar(connectionLabel(context))}`, `  sql: ${toonScalar(sql)}`, formatHelp(["Add `--execute` to run maintenance after review"])].join("\n"));
     return;
   }
   ensureTool("psql", "maintenance");
@@ -1099,7 +1100,7 @@ function helpRestore() {
   return helpUsage("pg-axi restore --database <name> --file <path> --confirm <name> [--clean --confirm-clean <name>] [--execute]", "Plan or run psql or pg_restore restore");
 }
 function helpMaintenance() {
-  return helpUsage("pg-axi maintenance --action <analyze|vacuum|vacuum-full|reindex> [--target <name>] [--execute]", "Plan or run PostgreSQL maintenance");
+  return helpUsage("pg-axi maintenance --action <analyze|vacuum|vacuum-full|reindex> [--target <name>] [--confirm <target>] [--execute]", "Plan or run PostgreSQL maintenance");
 }
 function helpActivity() {
   return helpUsage("pg-axi activity [--limit <n>]", "List active PostgreSQL sessions");
