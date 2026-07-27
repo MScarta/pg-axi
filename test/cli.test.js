@@ -276,6 +276,28 @@ test("skill generate check fails when stale and passes after generation", () => 
   assert.equal(checked.stdout, "skill: up-to-date");
 });
 
+test("the query read path is enforced by the server, not by the classifier", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd, {
+    psql: "#!/bin/sh\necho \"PGOPTIONS=$PGOPTIONS\" >> psql-env\necho 'ok'\n"
+  });
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+  const psqlEnv = () => fs.readFileSync(path.join(cwd, "psql-env"), "utf8").trim().split("\n");
+
+  for (const sql of [
+    "select pg_terminate_backend(pid) from pg_stat_activity",
+    "select pg_drop_replication_slot('s')",
+    "select purge_old_orders()",
+    "select pg_read_file('/etc/passwd')"
+  ]) {
+    assert.equal(run(["query", "--sql", sql], { cwd, env }).status, 0);
+    assert.match(psqlEnv().at(-1), /PGOPTIONS=.*-c default_transaction_read_only=on/);
+  }
+
+  assert.equal(run(["query", "--sql", "update users set name = 'x'", "--execute"], { cwd, env }).status, 0);
+  assert.equal(psqlEnv().at(-1), "PGOPTIONS=");
+});
+
 test("restore stops on error, reports a preflight, and gates --clean", () => {
   const cwd = tempWorkspace();
   const fakeBin = makeFakeBin(cwd, {

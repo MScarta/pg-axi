@@ -339,8 +339,8 @@ function query(parsed, context) {
   }
   ensureTool("psql", "query");
   const finalSql = applyLimit(sql, parsed.flags.limit);
-  const result = runPsql(finalSql, context, { tuplesOnly: false, noAlign: false });
-  if (result.status !== 0) runtimeError("postgres query failed", [sanitize(result.stderr || result.stdout)]);
+  const result = runPsql(finalSql, context, { tuplesOnly: false, noAlign: false, readOnly: !parsed.flags.execute });
+  if (result.status !== 0) runtimeError("postgres query failed", [sanitize(result.stderr || result.stdout), "Add `--execute` if this SQL is meant to write"]);
   const sanitized = sanitizeSecretColumns(result.stdout);
   const body = parsed.flags.full ? sanitized : truncate(sanitized, RESULT_LIMIT).text;
   const lines = ["query:", `  read_only: ${readOnly}`, `  dry_run: false`, `  output: ${toonScalar(body)}`];
@@ -557,7 +557,12 @@ function runPsql(sql, context, options = {}) {
   if (options.noAlign) args.push("--no-align");
   args.push(...connectionArgs(context, "psql"));
   args.push("-c", sql);
-  return runCommand("psql", args, context);
+  return runCommand("psql", args, options.readOnly ? readOnlyContext(context) : context);
+}
+
+function readOnlyContext(context) {
+  const options = `${process.env.PGOPTIONS ?? ""} -c default_transaction_read_only=on`.trim();
+  return { ...context, env: { ...(context.env ?? {}), PGOPTIONS: options } };
 }
 
 function connectionArgs(context, tool) {
