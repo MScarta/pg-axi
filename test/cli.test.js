@@ -276,6 +276,17 @@ test("skill generate check fails when stale and passes after generation", () => 
   assert.equal(checked.stdout, "skill: up-to-date");
 });
 
+test("generated skill guidance does not send agents to an unpublished npm package", () => {
+  const cwd = tempWorkspace();
+  const generated = run(["skill", "generate"], { cwd });
+  assert.equal(generated.status, 0);
+
+  const content = fs.readFileSync(path.join(cwd, "SKILL.md"), "utf8");
+  assert.doesNotMatch(content, /npx/);
+  assert.match(content, /Run `pg-axi` for live context/);
+  assert.equal(content, fs.readFileSync(path.join(root, "SKILL.md"), "utf8"));
+});
+
 test("the query read path is enforced by the server, not by the classifier", () => {
   const cwd = tempWorkspace();
   const fakeBin = makeFakeBin(cwd, {

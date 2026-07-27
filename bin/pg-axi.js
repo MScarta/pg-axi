@@ -1019,7 +1019,7 @@ function hookCommand() {
 }
 
 function skillContent() {
-  return `---\nname: pg-axi\ndescription: Use pg-axi to discover, create, inspect, query, back up, restore, and maintain PostgreSQL databases through safe TOON CLI workflows.\n---\n\n# pg-axi\n\nUse \`pg-axi\` when a task involves PostgreSQL databases, schemas, tables, indexes, roles, extensions, functions, queries, backups, restores, maintenance, activity, stats, replication, local Postgres, Docker Compose Postgres, or managed Postgres connection safety checks.\n\nRun \`npx -y pg-axi\` for live context. Use \`npx -y pg-axi doctor\` before database work. Discover targets with \`npx -y pg-axi discover\`. Inspect before mutating: \`npx -y pg-axi inspect --kind table --schema public --name <name>\`. Mutations require \`--execute\`; destructive operations also require \`--confirm <exact-name>\`.\n`;
+  return `---\nname: pg-axi\ndescription: Use pg-axi to discover, create, inspect, query, back up, restore, and maintain PostgreSQL databases through safe TOON CLI workflows.\n---\n\n# pg-axi\n\nUse \`pg-axi\` when a task involves PostgreSQL databases, schemas, tables, indexes, roles, extensions, functions, queries, backups, restores, maintenance, activity, stats, replication, local Postgres, Docker Compose Postgres, or managed Postgres connection safety checks.\n\nRun \`pg-axi\` for live context. Use \`pg-axi doctor\` before database work. Discover targets with \`pg-axi discover\`. Inspect before mutating: \`pg-axi inspect --kind table --schema public --name <name>\`. Mutations require \`--execute\`; destructive operations also require \`--confirm <exact-name>\`.\n`;
 }
 
 function usageError(message, help, code = 2) {
