@@ -276,6 +276,29 @@ test("skill generate check fails when stale and passes after generation", () => 
   assert.equal(checked.stdout, "skill: up-to-date");
 });
 
+test("restore stops on error, reports a preflight, and gates --clean", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd, {
+    psql: "#!/bin/sh\necho \"$@\" >> psql-argv\ncase \"$*\" in *relkind*) echo '4' ;; *) echo 'ok' ;; esac\n"
+  });
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const dryRun = run(["restore", "--database", "app", "--file", "app.sql", "--confirm", "app"], { cwd, env });
+  assert.equal(dryRun.status, 0);
+  assert.match(dryRun.stdout, /target_exists: true/);
+  assert.match(dryRun.stdout, /target_tables: 4/);
+  assert.match(dryRun.stdout, /already holds 4 tables/);
+  assert.match(dryRun.stdout, /psql -X --set ON_ERROR_STOP=1 -d app -f app.sql/);
+
+  const populated = run(["restore", "--database", "app", "--file", "app.sql", "--confirm", "app", "--execute"], { cwd, env });
+  assert.equal(populated.status, 1);
+  assert.match(populated.stdout, /already holds 4 tables/);
+
+  const unconfirmedClean = run(["restore", "--database", "app", "--file", "app.dump", "--confirm", "app", "--clean", "--execute"], { cwd, env });
+  assert.equal(unconfirmedClean.status, 2);
+  assert.match(unconfirmedClean.stdout, /requires --confirm-clean matching --database/);
+});
+
 test("dry-run command previews redact connection passwords", () => {
   const cwd = tempWorkspace();
   const fakeBin = makeFakeBin(cwd);

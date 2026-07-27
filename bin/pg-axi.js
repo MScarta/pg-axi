@@ -24,7 +24,7 @@ const COMMANDS = {
   create: { value: new Set(["--kind", "--name", "--schema", "--sql", "--file"]), boolean: new Set(["--execute", "--help"]), help: helpCreate },
   drop: { value: new Set(["--kind", "--name", "--schema", "--confirm"]), boolean: new Set(["--execute", "--help"]), help: helpDrop },
   backup: { value: new Set(["--database", "--file", "--format"]), boolean: new Set(["--execute", "--help"]), help: helpBackup },
-  restore: { value: new Set(["--database", "--file", "--confirm"]), boolean: new Set(["--clean", "--execute", "--help"]), help: helpRestore },
+  restore: { value: new Set(["--database", "--file", "--confirm", "--confirm-clean"]), boolean: new Set(["--clean", "--execute", "--help"]), help: helpRestore },
   maintenance: { value: new Set(["--action", "--target", "--confirm"]), boolean: new Set(["--execute", "--help"]), help: helpMaintenance },
   activity: { value: new Set(["--limit"]), boolean: new Set(["--help"]), help: helpActivity },
   stats: { value: new Set(["--kind", "--schema", "--limit"]), boolean: new Set(["--help"]), help: helpStats },
@@ -409,11 +409,16 @@ function restore(parsed, context) {
   if (!file) usageError("--file is required", ["Run `pg-axi restore --database <name> --file <path> --confirm <name>`"]);
   if (parsed.flags.confirm !== database) usageError("restore requires --confirm matching --database", [`Run \`pg-axi restore --database ${database} --file ${file} --confirm ${database}\` after review`]);
   assertDatabaseMatchesUrl(database, context);
+  if (parsed.flags.clean && parsed.flags.confirm_clean !== database) usageError("--clean drops every object in the dump before restoring and requires --confirm-clean matching --database", [`Run \`pg-axi restore --database ${database} --file ${file} --confirm ${database} --clean --confirm-clean ${database}\` after review`]);
+  const preflight = restorePreflight(database, context);
   const command = restoreCommand(database, file, parsed.flags.clean, context);
   if (!parsed.flags.execute) {
-    print(["restore:", "  dry_run: true", `  database: ${toonScalar(database)}`, `  file: ${toonScalar(file)}`, `  command: ${toonScalar(sanitize(formatCommand(command)))}`, formatHelp(["Add `--execute` to restore after review"])].join("\n"));
+    const help = ["Add `--execute` to restore after review"];
+    if (preflight.tables > 0) help.unshift(`Target ${database} already holds ${preflight.tables} tables and a restore into it can fail or merge`);
+    print(["restore:", "  dry_run: true", `  database: ${toonScalar(database)}`, `  file: ${toonScalar(file)}`, `  target_exists: ${preflight.exists}`, `  target_tables: ${preflight.tables}`, `  command: ${toonScalar(sanitize(formatCommand(command)))}`, formatHelp(help)].join("\n"));
     return;
   }
+  if (preflight.tables > 0 && !parsed.flags.clean) runtimeError(`restore target ${toonScalar(database)} already holds ${preflight.tables} tables`, ["Restore into an empty database", `Run \`pg-axi restore --database ${database} --file ${file} --confirm ${database} --clean --confirm-clean ${database} --execute\` to replace the objects in the dump`]);
   ensureTool(command.cmd, "restore");
   const result = runCommand(command.cmd, command.args, context);
   if (result.status !== 0) runtimeError("postgres restore failed", [sanitize(result.stderr || result.stdout)]);
@@ -631,8 +636,16 @@ function pgDumpCommand(database, file, format, context) {
   return { cmd: "pg_dump", args: [...connectionArgs({ ...context, database }, "pg_dump"), "-F", format === "plain" ? "p" : "c", "-f", file] };
 }
 
+function restorePreflight(database, context) {
+  if (!findExecutable("psql")) return { exists: "unknown", tables: "unknown" };
+  const result = runPsql("select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r','p') and n.nspname not in ('pg_catalog','information_schema')", { ...context, database }, { tuplesOnly: true, noAlign: true });
+  if (result.status !== 0) return { exists: false, tables: 0 };
+  const tables = Number(result.stdout.trim());
+  return { exists: true, tables: Number.isInteger(tables) ? tables : 0 };
+}
+
 function restoreCommand(database, file, clean, context) {
-  if (file.endsWith(".sql")) return { cmd: "psql", args: [...connectionArgs({ ...context, database }, "psql"), "-f", file] };
+  if (file.endsWith(".sql")) return { cmd: "psql", args: ["-X", "--set", "ON_ERROR_STOP=1", ...connectionArgs({ ...context, database }, "psql"), "-f", file] };
   return { cmd: "pg_restore", args: [...connectionArgs({ ...context, database }, "pg_restore"), ...(clean ? ["--clean"] : []), file] };
 }
 
@@ -1078,7 +1091,7 @@ function helpBackup() {
   return helpUsage("pg-axi backup --database <name> --file <path> [--format plain|custom] [--execute]", "Plan or run pg_dump");
 }
 function helpRestore() {
-  return helpUsage("pg-axi restore --database <name> --file <path> --confirm <name> [--clean] [--execute]", "Plan or run psql or pg_restore restore");
+  return helpUsage("pg-axi restore --database <name> --file <path> --confirm <name> [--clean --confirm-clean <name>] [--execute]", "Plan or run psql or pg_restore restore");
 }
 function helpMaintenance() {
   return helpUsage("pg-axi maintenance --action <analyze|vacuum|vacuum-full|reindex> [--target <name>] [--execute]", "Plan or run PostgreSQL maintenance");
