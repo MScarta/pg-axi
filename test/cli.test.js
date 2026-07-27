@@ -276,6 +276,21 @@ test("skill generate check fails when stale and passes after generation", () => 
   assert.equal(checked.stdout, "skill: up-to-date");
 });
 
+test("--url must look like a connection URL and cannot smuggle psql options", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd, { psql: argvFake("psql") });
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+
+  const smuggled = run(["query", "--sql", "select 1", "--url", "-cDROP TABLE orders"], { cwd, env });
+  assert.equal(smuggled.status, 2);
+  assert.match(smuggled.stdout, /error: --url must be a postgres:\/\/ or postgresql:\/\/ connection URL/);
+  assert.equal(fs.existsSync(path.join(cwd, "psql-argv")), false);
+
+  const accepted = run(["query", "--sql", "select 1", "--url", "postgres://user@db.example.com:5432/app"], { cwd, env });
+  assert.equal(accepted.status, 0);
+  assert.match(fs.readFileSync(path.join(cwd, "psql-argv"), "utf8"), /postgres:\/\/user@db.example.com:5432\/app/);
+});
+
 test("pg-axi.config.json content cannot impersonate pg-axi output", () => {
   const cwd = tempWorkspace();
   const fakeBin = makeFakeBin(cwd);

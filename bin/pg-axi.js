@@ -190,15 +190,27 @@ function flagName(rawName) {
 }
 
 function buildContext(flags) {
+  const url = flags.url ?? process.env.DATABASE_URL ?? "";
+  if (url) assertConnectionUrl(url);
   return {
     cwd: path.resolve(flags.cwd ?? process.cwd()),
-    url: flags.url ?? process.env.DATABASE_URL ?? "",
+    url,
     host: flags.host ?? process.env.PGHOST ?? "",
     port: flags.port ?? process.env.PGPORT ?? "",
     user: flags.user ?? process.env.PGUSER ?? "",
     database: flags.database ?? process.env.PGDATABASE ?? "",
     service: flags.service ?? process.env.PGSERVICE ?? ""
   };
+}
+
+function assertConnectionUrl(url) {
+  const help = ["Run `pg-axi doctor --url postgres://user@host:5432/database`"];
+  if (!/^postgres(?:ql)?:\/\//i.test(url)) usageError("--url must be a postgres:// or postgresql:// connection URL", help);
+  try {
+    new URL(url);
+  } catch {
+    usageError("--url is not a valid connection URL", help);
+  }
 }
 
 function home(_parsed, context) {
