@@ -356,7 +356,7 @@ function create(parsed, context) {
   const command = createCommand(kind, name, parsed.flags, context);
   if (!command) usageError(`unknown create kind ${toonScalar(kind)}`, ["valid kinds: database, schema, table, index, role, extension, view"]);
   if (!parsed.flags.execute) {
-    print(["create:", "  dry_run: true", `  kind: ${kind}`, `  name: ${toonScalar(name)}`, `  command: ${toonScalar(formatCommand(command))}`, formatHelp([`Run \`pg-axi create --kind ${kind} --name ${name} --execute\` to create after review`])].join("\n"));
+    print(["create:", "  dry_run: true", `  kind: ${kind}`, `  name: ${toonScalar(name)}`, `  command: ${toonScalar(sanitize(formatCommand(command)))}`, formatHelp([`Run \`pg-axi create --kind ${kind} --name ${name} --execute\` to create after review`])].join("\n"));
     return;
   }
   ensureTool(command.cmd, "create");
@@ -374,7 +374,7 @@ function dropObject(parsed, context) {
   const command = dropCommand(kind, name, parsed.flags, context);
   if (!command) usageError(`unknown drop kind ${toonScalar(kind)}`, ["valid kinds: database, schema, table, index, role, extension, view"]);
   if (!parsed.flags.execute) {
-    print(["drop:", "  dry_run: true", `  kind: ${kind}`, `  name: ${toonScalar(name)}`, `  command: ${toonScalar(formatCommand(command))}`, formatHelp([`Run \`pg-axi drop --kind ${kind} --name ${name} --confirm ${name} --execute\` to drop after review`])].join("\n"));
+    print(["drop:", "  dry_run: true", `  kind: ${kind}`, `  name: ${toonScalar(name)}`, `  command: ${toonScalar(sanitize(formatCommand(command)))}`, formatHelp([`Run \`pg-axi drop --kind ${kind} --name ${name} --confirm ${name} --execute\` to drop after review`])].join("\n"));
     return;
   }
   ensureTool(command.cmd, "drop");
@@ -393,7 +393,7 @@ function backup(parsed, context) {
   assertDatabaseMatchesUrl(database, context);
   const command = pgDumpCommand(database, file, format, context);
   if (!parsed.flags.execute) {
-    print(["backup:", "  dry_run: true", `  database: ${toonScalar(database)}`, `  file: ${toonScalar(file)}`, `  command: ${toonScalar(formatCommand(command))}`, formatHelp(["Add `--execute` to write the backup after review"])].join("\n"));
+    print(["backup:", "  dry_run: true", `  database: ${toonScalar(database)}`, `  file: ${toonScalar(file)}`, `  command: ${toonScalar(sanitize(formatCommand(command)))}`, formatHelp(["Add `--execute` to write the backup after review"])].join("\n"));
     return;
   }
   ensureTool("pg_dump", "backup");
@@ -411,7 +411,7 @@ function restore(parsed, context) {
   assertDatabaseMatchesUrl(database, context);
   const command = restoreCommand(database, file, parsed.flags.clean, context);
   if (!parsed.flags.execute) {
-    print(["restore:", "  dry_run: true", `  database: ${toonScalar(database)}`, `  file: ${toonScalar(file)}`, `  command: ${toonScalar(formatCommand(command))}`, formatHelp(["Add `--execute` to restore after review"])].join("\n"));
+    print(["restore:", "  dry_run: true", `  database: ${toonScalar(database)}`, `  file: ${toonScalar(file)}`, `  command: ${toonScalar(sanitize(formatCommand(command)))}`, formatHelp(["Add `--execute` to restore after review"])].join("\n"));
     return;
   }
   ensureTool(command.cmd, "restore");

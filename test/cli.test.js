@@ -276,6 +276,25 @@ test("skill generate check fails when stale and passes after generation", () => 
   assert.equal(checked.stdout, "skill: up-to-date");
 });
 
+test("dry-run command previews redact connection passwords", () => {
+  const cwd = tempWorkspace();
+  const fakeBin = makeFakeBin(cwd);
+  const env = { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, DATABASE_URL: "postgres://user:supersecret@db.example.com:5432/app" };
+
+  for (const args of [
+    ["create", "--kind", "schema", "--name", "app"],
+    ["drop", "--kind", "schema", "--name", "app", "--confirm", "app"],
+    ["backup", "--database", "app", "--file", "app.dump"],
+    ["restore", "--database", "app", "--file", "app.sql", "--confirm", "app"]
+  ]) {
+    const result = run(args, { cwd, env });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /dry_run: true/);
+    assert.doesNotMatch(result.stdout, /supersecret/);
+    assert.match(result.stdout, /<redacted>/);
+  }
+});
+
 test("--url is honoured by pg_dump, pg_restore, createdb, and dropdb", () => {
   const cwd = tempWorkspace();
   const url = "postgres://user:secret@db.example.com:5432/app";
