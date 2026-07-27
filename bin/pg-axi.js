@@ -29,7 +29,6 @@ const COMMANDS = {
   activity: { value: new Set(["--limit"]), boolean: new Set(["--help"]), help: helpActivity },
   stats: { value: new Set(["--kind", "--schema", "--limit"]), boolean: new Set(["--help"]), help: helpStats },
   kill: { value: new Set(["--pid", "--confirm"]), boolean: new Set(["--execute", "--help"]), help: helpKill },
-  "hooks install": { value: new Set(["--agent", "--scope"]), boolean: new Set(["--execute", "--help"]), help: helpHooksInstall },
   "skill generate": { value: new Set(["--output"]), boolean: new Set(["--check", "--help"]), help: helpSkillGenerate }
 };
 
@@ -138,7 +137,6 @@ function main() {
     activity,
     stats,
     kill: killBackend,
-    "hooks install": hooksInstall,
     "skill generate": skillGenerate
   };
   handlers[commandInfo.command](parsed, context);
@@ -146,7 +144,7 @@ function main() {
 
 function resolveCommand(args) {
   if (args.length === 0 || args[0].startsWith("--")) return { command: "home", args };
-  if (["hooks", "skill"].includes(args[0]) && args[1] && !args[1].startsWith("--")) {
+  if (["skill"].includes(args[0]) && args[1] && !args[1].startsWith("--")) {
     return { command: `${args[0]} ${args[1]}`, args: args.slice(2) };
   }
   return { command: args[0], args: args.slice(1) };
@@ -491,25 +489,6 @@ function killBackend(parsed, context) {
   const result = runPsql(sql, context, { tuplesOnly: true, noAlign: true });
   if (result.status !== 0) runtimeError("postgres kill failed", [sanitize(result.stderr || result.stdout)]);
   print(["kill:", "  dry_run: false", `  pid: ${pid}`, `  output: ${toonScalar(truncate(sanitize(result.stdout), PREVIEW_LIMIT).text)}`].join("\n"));
-}
-
-function hooksInstall(parsed, context) {
-  const agent = parsed.flags.agent ?? "all";
-  const scope = parsed.flags.scope ?? "project";
-  const validAgents = new Set(["codex", "claude", "opencode", "all"]);
-  const validScopes = new Set(["user", "project"]);
-  if (!validAgents.has(agent)) usageError(`unknown agent ${toonScalar(agent)}`, ["valid agents: codex, claude, opencode, all"]);
-  if (!validScopes.has(scope)) usageError(`unknown scope ${toonScalar(scope)}`, ["valid scopes: user, project"]);
-  const rows = hookTargets(agent, scope, context);
-  if (!parsed.flags.execute) {
-    print(["hooks:", "  dry_run: true", formatTable("files", rows, ["agent", "path", "status"]), formatHelp(["Run `pg-axi hooks install --agent all --scope project --execute` to write hook files"])].join("\n"));
-    return;
-  }
-  for (const row of rows) {
-    fs.mkdirSync(path.dirname(row.absolutePath), { recursive: true });
-    fs.writeFileSync(row.absolutePath, hookContent(row.agent), "utf8");
-  }
-  print(formatTable("files", rows.map((row) => ({ agent: row.agent, path: row.path, status: "written" })), ["agent", "path", "status"]));
 }
 
 function skillGenerate(parsed, context) {
@@ -1008,33 +987,6 @@ function displayPath(filePath, cwd) {
   return collapseHome(filePath);
 }
 
-function hookTargets(agent, scope, context) {
-  const selected = agent === "all" ? ["codex", "claude", "opencode"] : [agent];
-  return selected.map((item) => {
-    const absolutePath = hookPath(item, scope, context);
-    return { agent: item, path: displayPath(absolutePath, context.cwd), absolutePath, status: fs.existsSync(absolutePath) ? "repair" : "create" };
-  });
-}
-
-function hookPath(agent, scope, context) {
-  if (agent === "codex") return scope === "project" ? path.join(context.cwd, ".codex", "hooks.json") : path.join(os.homedir(), ".codex", "hooks.json");
-  if (agent === "claude") return scope === "project" ? path.join(context.cwd, ".claude", "settings.json") : path.join(os.homedir(), ".claude", "settings.json");
-  return scope === "project" ? path.join(context.cwd, ".opencode", "pg-axi.json") : path.join(os.homedir(), ".config", "opencode", "plugins", "pg-axi.json");
-}
-
-function hookContent(agent) {
-  const command = hookCommand();
-  if (agent === "codex") return `${JSON.stringify({ SessionStart: [{ command }] }, null, 2)}\n`;
-  if (agent === "claude") return `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] } }, null, 2)}\n`;
-  return `${JSON.stringify({ name: "pg-axi", command }, null, 2)}\n`;
-}
-
-function hookCommand() {
-  const installed = findExecutable("pg-axi");
-  if (installed && path.resolve(installed) === path.resolve(process.argv[1])) return "pg-axi";
-  return `${process.execPath} ${process.argv[1]}`;
-}
-
 function skillContent() {
   return `---\nname: pg-axi\ndescription: Use pg-axi to discover, create, inspect, query, back up, restore, and maintain PostgreSQL databases through safe TOON CLI workflows.\n---\n\n# pg-axi\n\nUse \`pg-axi\` when a task involves PostgreSQL databases, schemas, tables, indexes, roles, extensions, functions, queries, backups, restores, maintenance, activity, stats, replication, local Postgres, Docker Compose Postgres, or managed Postgres connection safety checks.\n\nRun \`pg-axi\` for live context. Use \`pg-axi doctor\` before database work. Discover targets with \`pg-axi discover\`. Inspect before mutating: \`pg-axi inspect --kind table --schema public --name <name>\`. Mutations require \`--execute\`; destructive operations also require \`--confirm <exact-name>\`.\n`;
 }
@@ -1057,7 +1009,7 @@ function helpHome() {
   return [
     `bin: ${toonScalar(collapseHome(process.argv[1]))}`,
     `description: ${toonScalar(DESCRIPTION)}`,
-    "commands[18]{name,description}:",
+    "commands[17]{name,description}:",
     "  doctor,Check PostgreSQL client tools readiness connection and provider hints",
     "  services,List PostgreSQL capability domains",
     "  discover,Detect env compose migrations ORM and managed Postgres targets",
@@ -1073,7 +1025,6 @@ function helpHome() {
     "  activity,List active sessions",
     "  stats,List database table or index stats",
     "  kill,Terminate a backend with --execute and --confirm",
-    "  hooks install,Install session context hooks",
     "  skill generate,Generate installable Agent Skill guidance",
     "examples[3]:",
     "  pg-axi",
@@ -1126,9 +1077,6 @@ function helpStats() {
 }
 function helpKill() {
   return helpUsage("pg-axi kill --pid <pid> --confirm <pid> [--execute]", "Terminate a backend with explicit guards");
-}
-function helpHooksInstall() {
-  return helpUsage("pg-axi hooks install [--agent codex|claude|opencode|all] [--scope user|project] [--execute]", "Install or preview session hooks");
 }
 function helpSkillGenerate() {
   return helpUsage("pg-axi skill generate [--output SKILL.md] [--check]", "Generate or verify installable Agent Skill guidance");

@@ -76,13 +76,7 @@ Provider lifecycle operations are opt-in through custom targets. Core `pg-axi`
 commands operate through standard PostgreSQL tools such as `psql`, `createdb`,
 `dropdb`, `pg_dump`, and `pg_restore`.
 
-## Hooks and Skill
-
-Install ambient session context hooks after explicit opt-in:
-
-```sh
-pg-axi hooks install --agent all --scope project --execute
-```
+## Skill
 
 Generate or verify installable skill guidance:
 

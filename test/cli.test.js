@@ -276,6 +276,12 @@ test("skill generate check fails when stale and passes after generation", () => 
   assert.equal(checked.stdout, "skill: up-to-date");
 });
 
+test("hooks install is not a command", () => {
+  const result = run(["hooks", "install"]);
+  assert.equal(result.status, 2);
+  assert.match(result.stdout, /error: unknown command hooks/);
+});
+
 test("--url must look like a connection URL and cannot smuggle psql options", () => {
   const cwd = tempWorkspace();
   const fakeBin = makeFakeBin(cwd, { psql: argvFake("psql") });
