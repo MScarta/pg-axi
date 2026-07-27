@@ -763,14 +763,18 @@ function customTargets(context) {
   const config = readJson(file);
   if (!config?.targets || !Array.isArray(config.targets)) return [];
   return config.targets.map((target) => ({
-    id: String(target.id),
-    type: target.type ?? "custom",
+    id: `config:${untrustedText(target.id, 60)}`,
+    type: untrustedText(target.type ?? "custom", 40),
     path: path.resolve(context.cwd, target.path ?? "."),
-    detail: target.detail ?? "custom PostgreSQL workflow",
-    provider: target.provider ?? "",
-    reason: target.reason ?? "pg-axi.config.json target",
+    detail: `[config] ${untrustedText(target.detail ?? "custom PostgreSQL workflow", 120)}`,
+    provider: untrustedText(target.provider ?? "", 40),
+    reason: `[config] ${untrustedText(target.reason ?? "pg-axi.config.json target", 120)}`,
     commands: target.commands
   }));
+}
+
+function untrustedText(value, limit) {
+  return truncate(String(value ?? "").replace(/\s+/g, " ").trim(), limit).text;
 }
 
 function managedHints(context) {
